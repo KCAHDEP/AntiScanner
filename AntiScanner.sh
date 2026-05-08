@@ -50,27 +50,28 @@ case $FW_CHOICE in
 esac
 
 S="/usr/local/bin/update-antiscanner.sh"
-cat << EOF > "$S"
+
+cat << 'EOF' > "$S"
 #!/bin/bash
 URL="https://gist.githubusercontent.com/sngvy/07cee7ac810c9d222fbebddff8c1d1b8/raw/blacklist.txt"
-TEMP_FILE=\$(mktemp)
-MODE="$MODE"
+TEMP_FILE=$(mktemp)
+MODE="__MODE_PLACEHOLDER__"
 
 setup_iptables_chains() {
     for cmd in iptables ip6tables; do
-        if ! \$cmd -L SCANNERS-BLOCK -n &>/dev/null; then
-            \$cmd -N SCANNERS-BLOCK
+        if ! $cmd -L SCANNERS-BLOCK -n &>/dev/null; then
+            $cmd -N SCANNERS-BLOCK
         else
-            \$cmd -F SCANNERS-BLOCK
+            $cmd -F SCANNERS-BLOCK
         fi
-        if ! \$cmd -C INPUT -j SCANNERS-BLOCK &>/dev/null; then
-            \$cmd -I INPUT 1 -j SCANNERS-BLOCK
+        if ! $cmd -C INPUT -j SCANNERS-BLOCK &>/dev/null; then
+            $cmd -I INPUT 1 -j SCANNERS-BLOCK
         fi
     done
 }
 
-if curl -sSL "\$URL" -o "\$TEMP_FILE" && [[ -s "\$TEMP_FILE" ]]; then
-    if [ "\$MODE" = "ufw" ]; then
+if curl -sSL "$URL" -o "$TEMP_FILE" && [[ -s "$TEMP_FILE" ]]; then
+    if [ "$MODE" = "ufw" ]; then
         sed -i '/AntiScanner-Block/d' /etc/ufw/user.rules
         sed -i '/AntiScanner-Block/d' /etc/ufw/user6.rules
         while IFS= read -r subnet; do
@@ -91,23 +92,27 @@ if curl -sSL "\$URL" -o "\$TEMP_FILE" && [[ -s "\$TEMP_FILE" ]]; then
     else
         setup_iptables_chains
         while IFS= read -r subnet; do
-            [[ -z "\$subnet" || "\$subnet" == "#"* ]] && continue
-            if [[ "\$subnet" =~ : ]]; then
-                ip6tables -A SCANNERS-BLOCK -s "\$subnet" -j DROP
+            [[ -z "$subnet" || "$subnet" == "#"* ]] && continue
+            if [[ "$subnet" =~ : ]]; then
+                ip6tables -A SCANNERS-BLOCK -s "$subnet" -j DROP
             else
-                iptables -A SCANNERS-BLOCK -s "\$subnet" -j DROP
+                iptables -A SCANNERS-BLOCK -s "$subnet" -j DROP
             fi
-        done < "\$TEMP_FILE"
+        done < "$TEMP_FILE"
         iptables-save > /etc/iptables/rules.v4
         ip6tables-save > /etc/iptables/rules.v6
     fi
-    echo "\$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] AntiScanner updated via \$MODE"
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [SUCCESS] AntiScanner updated via $MODE"
 fi
-rm -f "\$TEMP_FILE"
+rm -f "$TEMP_FILE"
 EOF
+
+# Подстановка режима в созданный скрипт
+sed -i "s/__MODE_PLACEHOLDER__/$MODE/" "$S"
 
 chmod +x "$S"
 $S
+
 C_JOB="20 3 * * * $S >> /var/log/antiscanner_update.log 2>&1"
 (crontab -l 2>/dev/null | grep -v "$S" ; echo "$C_JOB") | crontab -
 
