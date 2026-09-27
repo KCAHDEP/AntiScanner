@@ -188,6 +188,31 @@ setup_iptables_chains() {
     done
 }
 
+setup_tcp_flags_protection() {
+    for cmd in iptables ip6tables; do
+        if ! $cmd -L TCP-FLAGS-PROTECT -n &>/dev/null; then
+            $cmd -N TCP-FLAGS-PROTECT
+        fi
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL NONE -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL NONE -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL ALL -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL ALL -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL FIN,URG,PSH -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL FIN,URG,PSH -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL SYN,RST,ACK,FIN,URG -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags ALL SYN,RST,ACK,FIN,URG -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags SYN,RST SYN,RST -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags SYN,RST SYN,RST -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp --tcp-flags SYN,FIN SYN,FIN -j DROP
+        $cmd -C TCP-FLAGS-PROTECT -p tcp ! --syn -m conntrack --ctstate NEW -j DROP 2>/dev/null || \
+            $cmd -A TCP-FLAGS-PROTECT -p tcp ! --syn -m conntrack --ctstate NEW -j DROP
+        if ! $cmd -C INPUT -p tcp -j TCP-FLAGS-PROTECT &>/dev/null; then
+            $cmd -I INPUT 1 -p tcp -j TCP-FLAGS-PROTECT
+        fi
+    done
+}
+
 if curl -sSL --max-time 30 "$URL" -o "$TEMP_FILE" && [[ -s "$TEMP_FILE" ]]; then
     if [ "$MODE" = "ufw" ]; then
         sed -i '/AntiScanner-Block/d' /etc/ufw/user.rules
@@ -211,6 +236,7 @@ if curl -sSL --max-time 30 "$URL" -o "$TEMP_FILE" && [[ -s "$TEMP_FILE" ]]; then
         ufw reload
     else
         setup_iptables_chains
+        setup_tcp_flags_protection
         while IFS= read -r subnet; do
             [[ -z "$subnet" || "$subnet" == "#"* ]] && continue
             if [[ "$subnet" =~ : ]]; then
@@ -243,7 +269,8 @@ if [[ "$SYSTEMD_CHOICE" =~ ^[Yy]$ ]]; then
     cat << EOF > /etc/systemd/system/antiscanner-update.service
 [Unit]
 Description=Update AntiScanner Blocklist on Boot
-After=network.target
+After=network.target netfilter-persistent.service
+Requires=netfilter-persistent.service
 
 [Service]
 Type=oneshot
@@ -260,4 +287,3 @@ fi
 
 echo -e "${B_GREEN}AntiScanner успешно настроен через $MODE!${NC}"
 echo -e "${B_GREEN}Защита от аномальных TCP-флагов активна (цепочка TCP-FLAGS-PROTECT / before.rules).${NC}"
-
